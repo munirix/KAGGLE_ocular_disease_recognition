@@ -3,6 +3,8 @@
 # Stack fixada conforme escopo academico. Alvo de linguagem: Python 3.14.0
 # (validado tambem em Python 3.13.x). Versoes com limites superiores para
 # garantir reprodutibilidade da banca.
+#
+# pip install -r requirements.txt
 # -----------------------------------------------------------------------------
 numpy>=2.1,<2.4
 pandas>=2.2,<2.4
