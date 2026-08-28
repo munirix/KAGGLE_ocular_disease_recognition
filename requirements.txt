@@ -1,15 +1,15 @@
 # -----------------------------------------------------------------------------
-# TCC - Diagnostico de defeitos refrativos (miopia) via imagens de fundo de olho
-# Stack fixada conforme escopo academico. Alvo de linguagem: Python 3.14.0
-# (validado tambem em Python 3.13.x). Versoes com limites superiores para
+# TCC - Triagem do rotulo ocular de miopia patologica via imagens de fundo de olho
+# Stack fixada conforme escopo academico. Alvo de linguagem: Python 3.13.x
+# (testado em Python 3.13.4). Versoes com limites superiores para
 # garantir reprodutibilidade da banca.
-#
-# pip install -r requirements.txt
 # -----------------------------------------------------------------------------
+
 numpy>=2.1,<2.4
 pandas>=2.2,<2.4
 scipy>=1.13,<1.17
 scikit-learn>=1.5,<1.8
+mord>=0.7,<0.8
 opencv-python-headless>=4.9,<4.12
 Pillow>=10.3,<12
 matplotlib>=3.8,<3.11
@@ -17,3 +17,6 @@ seaborn>=0.13,<0.14
 openpyxl>=3.1,<3.2
 joblib>=1.3,<2
 tqdm>=4.66,<5
+
+# Dependencias de desenvolvimento / testes
+pytest>=8.0,<10

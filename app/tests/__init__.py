@@ -1,0 +1,1 @@
+"""Testes automatizados do pipeline de triagem do rotulo ocular de miopia."""

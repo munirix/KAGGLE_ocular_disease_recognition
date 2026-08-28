@@ -23,7 +23,7 @@ import seaborn as sns
 
 from . import config as C
 from .labeling import SYNTHETIC_DISCLAIMER
-from .utils import LOGGER
+from .logging_utils import LOGGER
 
 sns.set_theme(style="whitegrid", context="notebook")
 _DPI = 120
@@ -46,10 +46,11 @@ def _synthetic_banner(fig) -> None:
 # -----------------------------------------------------------------------------
 # 1. ANALISE EXPLORATORIA (EDA)
 # -----------------------------------------------------------------------------
+
 def plot_label_distribution_full(full_df: pd.DataFrame, name="eda_01_labels_8classes.png") -> Path:
     """Distribuicao das 8 classes originais do ODIR-5K (contexto)."""
     counts = full_df["labels"].value_counts()
-    counts.index = [str(i).strip("[']") for i in counts.index]
+    counts.index = [str(i).strip("[]'") for i in counts.index]
     fig, ax = plt.subplots(figsize=(9, 5))
     sns.barplot(x=counts.index, y=counts.values, ax=ax, hue=counts.index,
                 palette="viridis", legend=False)
@@ -90,14 +91,14 @@ def plot_demographics(cohort: pd.DataFrame, name="eda_03_demografia.png") -> Pat
 
 
 def plot_severity_distribution(myopia_df: pd.DataFrame, name="eda_04_severidade.png") -> Path:
-    """Distribuicao das 3 classes de severidade (ALVO SINTETICO)."""
+    """Distribuicao das classes de severidade definidas em C.SEVERITY_CLASSES (ALVO SINTETICO)."""
     counts = myopia_df["severity"].value_counts().reindex(C.SEVERITY_CLASSES).fillna(0)
     fig, ax = plt.subplots(figsize=(7, 5))
     sns.barplot(x=counts.index, y=counts.values, ax=ax, hue=counts.index,
                 palette="rocket", legend=False)
     for i, v in enumerate(counts.values):
         ax.text(i, v + 0.5, str(int(v)), ha="center", fontsize=11, fontweight="bold")
-    ax.set(title="Etapa 3 - Severidade da miopia (leve/alta/magna)",
+    ax.set(title="Etapa 3 - Severidade da miopia",
            xlabel="Severidade", ylabel="Nº de imagens")
     _synthetic_banner(fig)
     return _save(fig, name)
@@ -121,6 +122,7 @@ def plot_diopter_distribution(myopia_df: pd.DataFrame, name="eda_05_dioptria.png
 # -----------------------------------------------------------------------------
 # 2. RETORNO VISUAL DE IMAGENS (Etapa 1)
 # -----------------------------------------------------------------------------
+
 def plot_preprocessing_steps(steps: dict, title: str, name: str) -> Path:
     """Mostra os estagios da Etapa 1 lado a lado para UMA imagem."""
     keys = ["1_original", "2_cropped", "3_resized", "4_clahe", "5_normalized"]
@@ -138,7 +140,7 @@ def plot_preprocessing_steps(steps: dict, title: str, name: str) -> Path:
 
 
 def plot_original_vs_preprocessed(pairs: list[tuple[np.ndarray, np.ndarray, str]],
-                                  name="viz_original_vs_preproc.png") -> Path:
+                                 name="viz_original_vs_preproc.png") -> Path:
     """Grade original (topo) x pre-processada (base) para varias imagens."""
     n = len(pairs)
     fig, axes = plt.subplots(2, n, figsize=(3.2 * n, 6.6))
@@ -159,15 +161,15 @@ def plot_original_vs_preprocessed(pairs: list[tuple[np.ndarray, np.ndarray, str]
 # -----------------------------------------------------------------------------
 # 3. AVALIACAO DOS MODELOS
 # -----------------------------------------------------------------------------
+
 def plot_confusion_matrix(y_true, y_pred, class_names: list[str],
                           title: str, name: str, synthetic: bool = False) -> Path:
     """Matriz de confusao com contagem absoluta e proporcao por linha."""
     from sklearn.metrics import confusion_matrix
     cm = confusion_matrix(y_true, y_pred, labels=list(range(len(class_names))))
     cm_norm = cm.astype(float) / (cm.sum(axis=1, keepdims=True) + 1e-9)
-    annot = np.array([f"{cm[i, j]}\n({cm_norm[i, j]:.0%})"
-                      for i in range(cm.shape[0]) for j in range(cm.shape[1])])
-    annot = annot.reshape(cm.shape)
+    annot = np.array([[f"{cm[i, j]}\n({cm_norm[i, j]:.0%})"
+                       for j in range(cm.shape[1])] for i in range(cm.shape[0])])
     fig, ax = plt.subplots(figsize=(1.6 * len(class_names) + 3,
                                     1.4 * len(class_names) + 2.5))
     sns.heatmap(cm_norm, annot=annot, fmt="", cmap="Blues", cbar=True,
@@ -206,8 +208,7 @@ def plot_pr_curves(curves: dict[str, dict], name="stage2_pr.png") -> Path:
 def plot_threshold_analysis(y_true, y_score, chosen_threshold: float,
                             target_sensitivity: float, title: str,
                             name="stage2_threshold.png") -> Path:
-    """
-    Sensibilidade (recall da miopia) e precisao em funcao do limiar de decisao,
+    """Sensibilidade (recall da miopia) e precisao em funcao do limiar de decisao,
     com o alvo de sensibilidade e o limiar escolhido destacados. As curvas usam
     os escores do TESTE (ilustra a generalizacao do ponto de operacao); o limiar
     em si foi escolhido sobre escores out-of-fold do treino (sem vazamento).
@@ -219,9 +220,9 @@ def plot_threshold_analysis(y_true, y_score, chosen_threshold: float,
     ax.plot(thr, rec, lw=2, color="#C44E52", label="Sensibilidade (recall Miopia)")
     ax.plot(thr, prec, lw=2, color="#4C72B0", label="Precisao (Miopia)")
     ax.axhline(target_sensitivity, ls=":", lw=1.2, color="#C44E52",
-               label=f"Alvo de sensibilidade = {target_sensitivity:.2f}")
+               label=f"Alvo de sensibilidade ({target_sensitivity:.2f})")
     ax.axvline(chosen_threshold, ls="--", lw=1.6, color="k",
-               label=f"Limiar escolhido = {chosen_threshold:.3f}")
+               label=f"Limiar escolhido ({chosen_threshold:.3f})")
     ax.set(title=title, xlabel="Limiar de decisao", ylabel="Metrica",
            xlim=(0, 1), ylim=(0, 1.02))
     ax.legend(loc="lower center", fontsize=9)
@@ -229,7 +230,7 @@ def plot_threshold_analysis(y_true, y_score, chosen_threshold: float,
 
 
 def plot_model_comparison(scores: dict[str, dict], metric: str,
-                          title: str, name: str) -> Path:
+                          title: str, name: str, synthetic: bool = False) -> Path:
     """Barra comparando um metrica entre modelos."""
     labels = list(scores.keys())
     values = [scores[m][metric] for m in labels]
@@ -238,11 +239,14 @@ def plot_model_comparison(scores: dict[str, dict], metric: str,
     for i, v in enumerate(values):
         ax.text(i, v + 0.01, f"{v:.3f}", ha="center", fontsize=10)
     ax.set(title=title, xlabel="Modelo", ylabel=metric, ylim=(0, 1.05))
+    if synthetic:
+        _synthetic_banner(fig)
     return _save(fig, name)
 
 
 def plot_feature_importance(names: list[str], importances: np.ndarray,
-                            top_k: int, title: str, name: str) -> Path:
+                            top_k: int, title: str, name: str,
+                            synthetic: bool = False) -> Path:
     """Top-k features mais importantes (Random Forest)."""
     order = np.argsort(importances)[::-1][:top_k]
     fig, ax = plt.subplots(figsize=(8, 0.35 * top_k + 1.5))
@@ -250,6 +254,8 @@ def plot_feature_importance(names: list[str], importances: np.ndarray,
                 ax=ax, hue=[names[i] for i in order], palette="flare", legend=False)
     ax.set(title=title, xlabel="Importancia", ylabel="")
     fig.tight_layout()
+    if synthetic:
+        _synthetic_banner(fig)
     return _save(fig, name)
 
 
@@ -262,8 +268,8 @@ def plot_regression_scatter(y_true, y_pred, r2: float, mae: float,
     fig, ax = plt.subplots(figsize=(7, 6.5))
     ax.scatter(y_true, y_pred, alpha=0.6, edgecolor="k", linewidth=0.3, color="#8172B3")
     ax.plot([lo, hi], [lo, hi], "r--", lw=1.5, label="Ideal (y=x)")
-    ax.set(title=f"Etapa 4 - Grau real x predito (R²={r2:.3f}, MAE={mae:.2f} D)",
-           xlabel="Grau real (D)", ylabel="Grau predito (D)",
+    ax.set(title=f"Etapa 4 - Valor de referência sintético x predito (R²={r2:.3f}, MAE={mae:.2f} D)",
+           xlabel="Valor de referência sintético (D)", ylabel="Grau predito (D)",
            xlim=(lo, hi), ylim=(lo, hi))
     ax.legend(loc="upper left")
     _synthetic_banner(fig)

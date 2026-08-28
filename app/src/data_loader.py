@@ -26,17 +26,19 @@ from pathlib import Path
 import pandas as pd
 
 from . import config as C
-from .utils import LOGGER
+from .logging_utils import LOGGER
+
 
 # -----------------------------------------------------------------------------
 # Metadados brutos
 # -----------------------------------------------------------------------------
+
 def load_full_df() -> pd.DataFrame:
     """Carrega o full_df.csv como veio do Kaggle (uma linha por imagem)."""
     if not C.FULL_DF_CSV.exists():
         raise FileNotFoundError(f"Nao encontrei {C.FULL_DF_CSV}")
     df = pd.read_csv(C.FULL_DF_CSV)
-    LOGGER.info("full_df.csv carregado: %d linhas x %d colunas", *df.shape)
+    LOGGER.info("full_df.csv carregado; %d linhas x %d colunas", *df.shape)
     return df
 
 
@@ -57,8 +59,7 @@ def _eye_keyword(row: pd.Series) -> str:
 
 
 def resolve_image_path(filename: str) -> Path | None:
-    """
-    Localiza o arquivo de imagem tentando, em ordem: Training, Testing e o
+    """Localiza o arquivo de imagem tentando, em ordem: Training, Testing e o
     diretorio de imagens pre-processadas fornecido. Retorna None se nao achar.
     """
     for base in (C.RAW_TRAIN_DIR, C.RAW_TEST_DIR, C.PROVIDED_PREPROCESSED_DIR):
@@ -71,8 +72,10 @@ def resolve_image_path(filename: str) -> Path | None:
 # -----------------------------------------------------------------------------
 # Coorte por imagem (Normal x Miopia)
 # -----------------------------------------------------------------------------
+
 def _classify_row(eye_kw: str) -> str | None:
     """Mapeia a keyword do olho para 'N', 'M' ou None (descartada)."""
+    eye_kw = eye_kw.strip().lower()
     if eye_kw == C.NORMAL_KEYWORD:
         return C.CLASS_NORMAL
     if any(term in eye_kw for term in C.MYOPIA_KEYWORDS):
@@ -81,10 +84,9 @@ def _classify_row(eye_kw: str) -> str | None:
 
 
 def build_cohort(cfg: C.RunConfig | None = None) -> pd.DataFrame:
-    """
-    Constroi o DataFrame da coorte por imagem, com colunas:
-      image_id, filename, eye, path, eye_keyword, class_str (N/M), label (0/1),
-      age, sex.
+    """Constroi o DataFrame da coorte por imagem, com colunas:
+        patient_id, filename, eye, path, eye_keyword, class_str (N/M), label (0/1),
+        age, sex,
 
     `cfg.max_per_class` permite subamostrar de forma estratificada e reprodutivel
     (util para smoke tests). Linhas sem arquivo em disco sao descartadas.
@@ -118,10 +120,10 @@ def build_cohort(cfg: C.RunConfig | None = None) -> pd.DataFrame:
         ]
         cohort = pd.concat(parts).reset_index(drop=True)
 
-    cohort = cohort.rename(columns={"ID": "image_id",
+    cohort = cohort.rename(columns={"ID": "patient_id",
                                     "Patient Age": "age",
                                     "Patient Sex": "sex"})
-    keep = ["image_id", "filename", "eye", "path", "eye_keyword",
+    keep = ["patient_id", "filename", "eye", "path", "eye_keyword",
             "class_str", "label", "age", "sex"]
     cohort = cohort[keep].reset_index(drop=True)
 
@@ -130,7 +132,6 @@ def build_cohort(cfg: C.RunConfig | None = None) -> pd.DataFrame:
     ratio = n_norm / max(n_myop, 1)
     LOGGER.info("Coorte final: %d imagens | Normal=%d Miopia=%d (razao %.1f:1)",
                 len(cohort), n_norm, n_myop, ratio)
-
     return cohort
 
 
