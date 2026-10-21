@@ -1,6 +1,6 @@
 """
 preprocessing.py -- ETAPA 1 do pipeline
-=============================================================================
+=======================================
 Transforma imagens de fundo de olho de RESOLUCOES VARIADAS (Canon, Zeiss, Kowa)
 em tensores homogeneos, com contraste realcado, prontos para extracao de
 features.
@@ -30,11 +30,14 @@ import cv2
 import numpy as np
 
 from . import config as C
-from .utils import LOGGER, parallel_map
+from .logging_utils import LOGGER
+from .utils import parallel_map
+
 
 # -----------------------------------------------------------------------------
 # IO
 # -----------------------------------------------------------------------------
+
 def read_rgb(path: str | Path) -> np.ndarray:
     """Le uma imagem do disco em RGB uint8 (OpenCV le como BGR)."""
     img = cv2.imread(str(path), cv2.IMREAD_COLOR)
@@ -46,6 +49,7 @@ def read_rgb(path: str | Path) -> np.ndarray:
 # -----------------------------------------------------------------------------
 # Operacoes atomicas
 # -----------------------------------------------------------------------------
+
 def crop_fundus(img: np.ndarray, threshold: int = C.FUNDUS_CROP_THRESHOLD) -> np.ndarray:
     """Recorta a borda preta ao redor do circulo do fundo de olho."""
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
@@ -94,11 +98,11 @@ def normalize01(img: np.ndarray) -> np.ndarray:
 # -----------------------------------------------------------------------------
 # Pipeline completo
 # -----------------------------------------------------------------------------
+
 def preprocess_image(path: str | Path,
                      size: int = C.IMAGE_SIZE,
                      return_steps: bool = False):
-    """
-    Aplica Etapa 1 completa. Retorna a imagem final uint8 RGB (crop+square+
+    """Aplica Etapa 1 completa. Retorna a imagem final uint8 RGB (crop+square+
     resize+CLAHE). Se return_steps=True, retorna um dict com cada estagio,
     usado na visualizacao comparativa.
     """
@@ -122,6 +126,7 @@ def preprocess_image(path: str | Path,
 # -----------------------------------------------------------------------------
 # Cache em disco (evita reprocessar milhares de imagens a cada execucao)
 # -----------------------------------------------------------------------------
+
 def _cache_path(filename: str) -> Path:
     return C.PREPROCESSED_CACHE_DIR / f"{Path(filename).stem}.png"
 

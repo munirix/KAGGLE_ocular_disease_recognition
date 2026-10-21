@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from sklearn.model_selection import GroupShuffleSplit
 
 from . import config as C
 from . import data_loader, features, labeling, preprocessing
@@ -17,13 +18,17 @@ from . import stage2_classification as s2
 from . import stage3_severity as s3
 from . import stage4_regression as s4
 from . import visualization as viz
-from .utils import LOGGER, save_json, set_global_seed, timer
+from .logging_utils import LOGGER, setup_file_logging
+from .utils import save_json, set_global_seed, timer
+
 
 # -----------------------------------------------------------------------------
 # Preparacao compartilhada (coorte + matriz de features), com cache
 # -----------------------------------------------------------------------------
+
 def prepare(cfg: C.RunConfig) -> tuple[pd.DataFrame, pd.DataFrame, np.ndarray, list[str]]:
     C.ensure_dirs()
+    setup_file_logging(C.OUTPUTS_DIR / "pipeline.log")
     set_global_seed(cfg.seed)
     full_df = data_loader.load_full_df()
     cohort = data_loader.build_cohort(cfg)
@@ -32,19 +37,28 @@ def prepare(cfg: C.RunConfig) -> tuple[pd.DataFrame, pd.DataFrame, np.ndarray, l
 
 
 def prepare_myopia(cfg: C.RunConfig, cohort: pd.DataFrame,
-                   X: np.ndarray) -> tuple[np.ndarray, pd.DataFrame]:
-    """Recorta a coorte de miopia (alinhando X) e gera os alvos sinteticos."""
+                   X: np.ndarray) -> tuple[np.ndarray, pd.DataFrame, np.ndarray, np.ndarray]:
+    """Recorta a coorte de miopia (alinhando X), divide em treino/teste por paciente
+    e gera os alvos sinteticos usando APENAS estatisticas do treino."""
     mask = (cohort["label"] == 1).to_numpy()
     X_my = X[mask]
-    myopia_df = data_loader.myopia_subset(cohort)           # mesma ordem de `mask`
-    myopia_df = labeling.assign_synthetic_targets(myopia_df, cfg)
+    myopia_df = data_loader.myopia_subset(cohort)         # mesma ordem de `mask`
+
+    # Split por paciente ANTES de gerar os rotulos sinteticos.
+    groups = myopia_df[C.GROUP_COL].to_numpy()
+    gss = GroupShuffleSplit(n_splits=1, test_size=C.TEST_SIZE, random_state=cfg.seed)
+    train_idx, test_idx = next(gss.split(X_my, groups=groups))
+
+    # Alvos derivados do treino; teste sofre a mesma transformacao (sem vazar estatisticas).
+    myopia_df = labeling.assign_synthetic_targets(myopia_df, cfg, fit_idx=train_idx)
     assert len(myopia_df) == X_my.shape[0], "Desalinhamento X_my x myopia_df"
-    return X_my, myopia_df
+    return X_my, myopia_df, train_idx, test_idx
 
 
 # -----------------------------------------------------------------------------
 # Etapa 0 - Analise exploratoria
 # -----------------------------------------------------------------------------
+
 def run_eda(cfg: C.RunConfig | None = None) -> None:
     cfg = cfg or C.RunConfig()
     full_df, cohort, X, _ = prepare(cfg)
@@ -52,7 +66,7 @@ def run_eda(cfg: C.RunConfig | None = None) -> None:
         viz.plot_label_distribution_full(full_df)
         viz.plot_binary_distribution(cohort)
         viz.plot_demographics(cohort)
-        _, myopia_df = prepare_myopia(cfg, cohort, X)
+        _, myopia_df, _, _ = prepare_myopia(cfg, cohort, X)
         viz.plot_severity_distribution(myopia_df)
         viz.plot_diopter_distribution(myopia_df)
 
@@ -60,6 +74,7 @@ def run_eda(cfg: C.RunConfig | None = None) -> None:
 # -----------------------------------------------------------------------------
 # Etapa 1 - Pre-processamento (+ visualizacao antes x depois)
 # -----------------------------------------------------------------------------
+
 def _sample_rows(cohort: pd.DataFrame, per_class: int, seed: int) -> pd.DataFrame:
     parts = []
     for cls in ("N", "M"):
@@ -78,46 +93,75 @@ def run_stage1(cfg: C.RunConfig | None = None) -> None:
     # Visualizacoes antes x depois.
     samples = _sample_rows(cohort, per_class=2, seed=cfg.seed)
     pairs = []
+    sample_figs = []
     for _, row in samples.iterrows():
         steps = preprocessing.preprocess_image(row["path"], return_steps=True)
         label = "Miopia" if row["class_str"] == "M" else "Normal"
+        fig_name = f"stage1_steps_{row['class_str']}_{row['filename'].replace('.jpg', '')}.png"
         viz.plot_preprocessing_steps(
-            steps, f"Etapa 1 - {label} ({row['filename']})",
-            f"stage1_steps_{row['class_str']}_{row['filename'].replace('.jpg','')}.png")
+            steps, f"Etapa 1 - {label} ({row['filename']})", fig_name
+        )
+        sample_figs.append(fig_name)
         pairs.append((steps["1_original"], steps["4_clahe"], label))
     viz.plot_original_vs_preprocessed(pairs)
+
+    # Resumo legivel da Etapa 1
+    n_preproc = len(list(C.PREPROCESSED_CACHE_DIR.glob("*.png")))
+    n_normal = int((cohort["label"] == C.BINARY_LABELS[C.CLASS_NORMAL]).sum())
+    n_miopia = int((cohort["label"] == C.BINARY_LABELS[C.CLASS_MYOPIA]).sum())
+    n_patients = int(cohort[C.GROUP_COL].nunique())
+    lines = [
+        "=== Resultados da Etapa 1 (Pre-processamento) ===",
+        f"Imagens pre-processadas: {n_preproc}",
+        f"Dimensao final: {C.IMAGE_SIZE}x{C.IMAGE_SIZE}",
+        f"Recorte do fundo: limiar {C.FUNDUS_CROP_THRESHOLD}",
+        f"CLAHE: clip limit {float(C.CLAHE_CLIP_LIMIT)}, tile grid {C.CLAHE_TILE_GRID}",
+        f"Cache: {C.PREPROCESSED_CACHE_DIR.name}",
+        f"Coorte: {n_normal} Normal / {n_miopia} Miopia ({n_patients} pacientes)",
+        f"Amostras visualizadas: {len(samples)} imagens ({', '.join(sample_figs)})",
+        "Figuras geradas:",
+        "  - viz_original_vs_preproc.png",
+    ]
+    for name in sample_figs:
+        lines.append(f"  - {name}")
+    results_path = C.REPORTS_DIR / "stage1_results.txt"
+    results_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    LOGGER.info("Resultados da Etapa 1 salvos em %s", results_path)
 
 
 # -----------------------------------------------------------------------------
 # Etapas 2, 3 e 4
 # -----------------------------------------------------------------------------
-def run_stage2(cfg: C.RunConfig | None = None) -> dict:
+
+def run_stage2(cfg: C.RunConfig | None = None, command: str = "stage2") -> dict:
     cfg = cfg or C.RunConfig()
     _, cohort, X, names = prepare(cfg)
-    return s2.run_stage2(X, cohort["label"].to_numpy(), names, cfg)
+    return s2.run_stage2(X, cohort, names, cfg, command=command)
 
 
 def run_stage3(cfg: C.RunConfig | None = None) -> dict:
     cfg = cfg or C.RunConfig()
     _, cohort, X, names = prepare(cfg)
-    X_my, myopia_df = prepare_myopia(cfg, cohort, X)
-    return s3.run_stage3(X_my, myopia_df["severity"].to_numpy(), names, cfg)
+    X_my, myopia_df, train_idx, test_idx = prepare_myopia(cfg, cohort, X)
+    return s3.run_stage3(X_my, myopia_df, names, cfg,
+                         train_idx=train_idx, test_idx=test_idx, command="stage3")
 
 
 def run_stage4(cfg: C.RunConfig | None = None) -> dict:
     cfg = cfg or C.RunConfig()
     _, cohort, X, names = prepare(cfg)
-    X_my, myopia_df = prepare_myopia(cfg, cohort, X)
-    return s4.run_stage4(X_my, myopia_df["diopter"].to_numpy(), names, cfg,
-                         stratify=myopia_df["severity"].to_numpy())
+    X_my, myopia_df, train_idx, test_idx = prepare_myopia(cfg, cohort, X)
+    return s4.run_stage4(X_my, myopia_df, names, cfg,
+                         train_idx=train_idx, test_idx=test_idx, command="stage4")
 
 
 # -----------------------------------------------------------------------------
 # Pipeline completo
 # -----------------------------------------------------------------------------
+
 def run_all(cfg: C.RunConfig | None = None) -> dict:
     cfg = cfg or C.RunConfig()
-    LOGGER.info("############### PIPELINE COMPLETO ###############")
+    LOGGER.info("################### PIPELINE COMPLETO ###################")
     full_df, cohort, X, names = prepare(cfg)
 
     # Etapa 1 (cache + figuras).
@@ -129,7 +173,8 @@ def run_all(cfg: C.RunConfig | None = None) -> dict:
         label = "Miopia" if row["class_str"] == "M" else "Normal"
         viz.plot_preprocessing_steps(
             steps, f"Etapa 1 - {label} ({row['filename']})",
-            f"stage1_steps_{row['class_str']}_{row['filename'].replace('.jpg','')}.png")
+            f"stage1_steps_{row['class_str']}_{row['filename'].replace('.jpg', '')}.png"
+        )
         pairs.append((steps["1_original"], steps["4_clahe"], label))
     viz.plot_original_vs_preprocessed(pairs)
 
@@ -139,15 +184,16 @@ def run_all(cfg: C.RunConfig | None = None) -> dict:
     viz.plot_demographics(cohort)
 
     # Etapa 2.
-    r2 = s2.run_stage2(X, cohort["label"].to_numpy(), names, cfg)
+    r2 = s2.run_stage2(X, cohort, names, cfg, command="all")
 
     # Etapas 3 e 4 (coorte de miopia + alvos sinteticos).
-    X_my, myopia_df = prepare_myopia(cfg, cohort, X)
+    X_my, myopia_df, train_idx, test_idx = prepare_myopia(cfg, cohort, X)
     viz.plot_severity_distribution(myopia_df)
     viz.plot_diopter_distribution(myopia_df)
-    r3 = s3.run_stage3(X_my, myopia_df["severity"].to_numpy(), names, cfg)
-    r4 = s4.run_stage4(X_my, myopia_df["diopter"].to_numpy(), names, cfg,
-                       stratify=myopia_df["severity"].to_numpy())
+    r3 = s3.run_stage3(X_my, myopia_df, names, cfg,
+                       train_idx=train_idx, test_idx=test_idx, command="all")
+    r4 = s4.run_stage4(X_my, myopia_df, names, cfg,
+                       train_idx=train_idx, test_idx=test_idx, command="all")
 
     summary = {
         "n_imagens_coorte": int(len(cohort)),
@@ -164,5 +210,5 @@ def run_all(cfg: C.RunConfig | None = None) -> dict:
         "aviso": "Alvos das Etapas 3 e 4 sao SINTETICOS (proxy MDI), nao clinicos.",
     }
     save_json(summary, C.REPORTS_DIR / "resumo_pipeline.json")
-    LOGGER.info("############### PIPELINE CONCLUIDO ###############")
+    LOGGER.info("################### PIPELINE CONCLUIDO ###################")
     return summary

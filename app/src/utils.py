@@ -1,14 +1,16 @@
 """
 utils.py
 ========
-Utilidades transversais: logging, semente global, serializacao de metricas e um
-mapeador paralelo com barra de progresso. Mante-las separadas evita duplicacao
-e deixa os modulos de dominio (pre-processamento, modelos) focados na sua logica.
+Utilidades de execucao: semente global (determinismo), medicao de tempo,
+serializacao de metricas e mapeador paralelo com barra de progresso.
+
+Responsabilidades vizinhas ficam em modulos proprios para evitar um modulo
+"saco de gatos": registro de eventos em `logging_utils.py` e metadados de
+proveniencia em `provenance.py`.
 """
 from __future__ import annotations
 
 import json
-import logging
 import random
 import time
 from contextlib import contextmanager
@@ -17,22 +19,7 @@ from typing import Any, Callable, Iterable, Sequence
 
 import numpy as np
 
-_LOG_FORMAT = "%(asctime)s | %(levelname)-7s | %(name)s | %(message)s"
-
-
-def get_logger(name: str = "miopia") -> logging.Logger:
-    """Retorna um logger configurado uma unica vez (idempotente)."""
-    logger = logging.getLogger(name)
-    if not logger.handlers:
-        handler = logging.StreamHandler()
-        handler.setFormatter(logging.Formatter(_LOG_FORMAT, datefmt="%H:%M:%S"))
-        logger.addHandler(handler)
-        logger.setLevel(logging.INFO)
-        logger.propagate = False
-    return logger
-
-
-LOGGER = get_logger()
+from .logging_utils import LOGGER
 
 
 def set_global_seed(seed: int) -> None:
@@ -43,7 +30,11 @@ def set_global_seed(seed: int) -> None:
 
 @contextmanager
 def timer(label: str):
-    """Mede e loga o tempo de um bloco de codigo (diagnostico de gargalos)."""
+    """Mede e loga o tempo de um bloco de codigo (diagnostico de gargalos).
+
+    A duracao registrada aqui e persistida no log de execucao pelo `Tee`,
+    permitindo auditar o custo de cada etapa a posteriori.
+    """
     start = time.perf_counter()
     LOGGER.info("[inicio] %s", label)
     try:
@@ -77,8 +68,7 @@ def parallel_map(
     desc: str = "",
     use_threads: bool = False,
 ) -> list:
-    """
-    Aplica `func` a cada item em paralelo (joblib) com barra de progresso (tqdm).
+    """Aplica `func` a cada item em paralelo (joblib) com barra de progresso (tqdm).
 
     Usamos processos por padrao (CPU-bound: OpenCV/numpy). Para IO puro,
     `use_threads=True` evita o custo de serializacao entre processos.
